@@ -2,7 +2,7 @@
 
 ## Prérequis
 # 1️⃣ Aller dans le dossier du projet
-cd ~/Desktop/Bussiness/AI+GENIE
+cd ~/Desktop/Assistant-Analytique-type-Genie-MVP-local
 
 # 2️⃣ Créer un environnement virtuel (si pas déjà fait)
 python3 -m venv .venv
