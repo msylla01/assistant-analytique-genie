@@ -1,7 +1,3 @@
 # Environment variables
-<<<<<<< HEAD
 .env
-
-=======
-.env
->>>>>>> feature-branch
+.venv
