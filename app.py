@@ -1,13 +1,3 @@
-# app.py
-# Assistant Analytique (type Genie) – MVP local
-# Compatible Python 3.9.7 + Streamlit 1.12.0
-# - Upload CSV -> DuckDB
-# - Question NL -> SQL (OpenAI v1 ou v0.x auto-détecté / Azure OpenAI)
-# - Tableau + Graph + Exports
-# - Garde-fous SQL (lecture seule)
-# - Neutralisation des proxies d'environnement pour éviter l'erreur "proxies"
-# - UI multi-questions : chaque soumission crée une "nouvelle cellule" d'analyse
-
 import os, io, re, json
 from pathlib import Path
 import streamlit as st
@@ -16,18 +6,13 @@ import duckdb
 import plotly.express as px
 from dotenv import load_dotenv
 
-# ------------------------- Config page -------------------------
 st.set_page_config(page_title="Assistant Analytique (type Genie)", layout="wide")
 
-# ------------------------- Charger .env explicitement -------------------------
 ENV_PATH = Path.cwd() / ".env"
 load_dotenv(dotenv_path=ENV_PATH, override=True)
-
-# Neutraliser d'éventuelles variables proxies qui cassent le SDK
 for v in ["OPENAI_PROXY","HTTP_PROXY","HTTPS_PROXY","ALL_PROXY","http_proxy","https_proxy","all_proxy"]:
     os.environ.pop(v, None)
 
-# ------------------------- Helpers UI (compat Streamlit<=1.12) -------------------------
 def show_dataframe(df: pd.DataFrame):
     try:
         st.dataframe(df, use_container_width=True)
@@ -42,7 +27,6 @@ def show_chart(fig):
     except TypeError:
         st.plotly_chart(fig)
 
-# ------------------------- Etat de session -------------------------
 if "conn" not in st.session_state:
     st.session_state.conn = duckdb.connect(database=":memory:")
 if "table_name" not in st.session_state:
@@ -51,26 +35,15 @@ if "schema" not in st.session_state:
     st.session_state.schema = None
 if "messages" not in st.session_state:
     st.session_state.messages = []
-# Nouvel état pour les "cellules" Q/A persistées
-# Chaque item: {"question", "sql", "rationale", "df", "chart_cfg"}
 if "turns" not in st.session_state:
     st.session_state.turns = []
 
-# ------------------------- LLM: init compatible v1 / v0.x / Azure -------------------------
 def init_chat_fn():
-    """
-    Retourne (impl, chat_fn, model, client_error)
-    - impl: "v1", "v0", "azure-v1" ou None
-    - chat_fn(messages:list[dict]) -> str (content)
-    """
     key = os.getenv("OPENAI_API_KEY")
     if not key:
         return (None, None, None, "OPENAI_API_KEY manquante dans .env")
-
-    # Si Azure explicitement configuré (facultatif)
     use_azure = bool(os.getenv("AZURE_OPENAI_ENDPOINT") and os.getenv("AZURE_OPENAI_API_KEY"))
     model = os.getenv("AZURE_OPENAI_DEPLOYMENT") if use_azure else os.getenv("OPENAI_MODEL","gpt-4o-mini")
-
     try:
         if use_azure:
             from openai import AzureOpenAI
@@ -83,17 +56,13 @@ def init_chat_fn():
                 r = client.chat.completions.create(model=model, messages=messages, temperature=0.1)
                 return r.choices[0].message.content
             return ("azure-v1", chat, model, None)
-
-        # Tentative SDK v1+
         from openai import OpenAI
-        client = OpenAI(api_key=key)  # Aucun 'proxies' transmis
+        client = OpenAI(api_key=key)
         def chat(messages):
             r = client.chat.completions.create(model=model, messages=messages, temperature=0.1)
             return r.choices[0].message.content
         return ("v1", chat, model, None)
-
     except TypeError as e:
-        # Fallback SDK legacy (v0.x)
         try:
             import openai as openai_legacy
             openai_legacy.api_key = key
@@ -109,8 +78,8 @@ def init_chat_fn():
 IMPL, CHAT, MODEL, CLIENT_ERR = init_chat_fn()
 READY = (CHAT is not None) and (MODEL is not None)
 
-# ------------------------- NL -> SQL -------------------------
-SYSTEM_PROMPT = """Tu es un expert SQL (dialecte DuckDB).
+SYSTEM_PROMPT = """
+Tu es un expert SQL (dialecte DuckDB).
 Règles:
 - Utilise UNIQUEMENT la table {table_name} et les colonnes listées.
 - Génère une requête SQL de type SELECT, sans UPDATE/DELETE/INSERT/DDL.
@@ -163,21 +132,17 @@ def plot_df(df: pd.DataFrame, cfg: dict):
         return None
     ctype = str(cfg.get("type") or "").lower()
     x = cfg.get("x"); y = cfg.get("y")
-
     if x and x not in df.columns: x = None
     if isinstance(y, list):
         y = [c for c in y if c in df.columns] or None
     elif isinstance(y, str) and y not in df.columns:
         y = None
-
     if x is None: x = df.columns[0] if len(df.columns) else None
     if y is None:
         num = df.select_dtypes(include="number").columns.tolist()
         y = num[:1] if num else None
-
     if x is None or y is None:
         return None
-
     try:
         if ctype == "bar": return px.bar(df, x=x, y=y)
         if ctype == "line": return px.line(df, x=x, y=y)
@@ -185,7 +150,6 @@ def plot_df(df: pd.DataFrame, cfg: dict):
     except Exception:
         return None
 
-# ------------------------- Sidebar -------------------------
 st.sidebar.header("⚙️ Paramètres")
 if CLIENT_ERR:
     st.sidebar.error(f"LLM init error : {CLIENT_ERR}")
@@ -193,20 +157,22 @@ if READY:
     st.sidebar.success("LLM prêt : " + (IMPL or "OpenAI"))
 else:
     st.sidebar.warning("LLM non prêt. Vérifie `.env` (OPENAI_API_KEY / OPENAI_MODEL).")
-
 st.sidebar.markdown("### 💬 Exemples")
-st.sidebar.write("""\
+st.sidebar.write("""
 - CA et #transactions par **jour** sur **7 jours**, par **canal** (graph lignes).
 - Top 10 **marchands** par **taux d'échec** (7 derniers jours).
 - Heures de **pic d'activité** hier (bar chart).
 - Montants **> P99** (30 jours) avec **client, marchand, statut**.
 """)
 
-# ------------------------- Titre -------------------------
 st.title("🧠 Assistant Analytique (type Genie) – MVP local")
 
-# ------------------------- Upload CSV -------------------------
+# ----------- Upload CSV ou Coller Transactions -----------
 file = st.file_uploader("📤 Charger un fichier CSV (UTF-8)", type=["csv"])
+st.markdown("### 📋 Ou collez vos données ici (copier-coller brut)")
+texte = st.text_area("Collez ici les lignes CSV (avec entête)", height=10)
+
+df = None
 if file:
     head = file.read(2048).decode("utf-8", errors="ignore"); file.seek(0)
     sep = ";" if head.count(";") > head.count(",") else ","
@@ -214,7 +180,15 @@ if file:
         df = pd.read_csv(file, sep=sep)
     except Exception as e:
         st.error(f"Erreur lecture CSV: {e}"); st.stop()
+elif texte:
+    try:
+        head = texte[:2048]
+        sep = ";" if head.count(";") > head.count(",") else ","
+        df = pd.read_csv(io.StringIO(texte), sep=sep)
+    except Exception as e:
+        st.error(f"Erreur lecture des transactions collées : {e}")
 
+if df is not None:
     # Normalisation simple
     for c in df.columns:
         lc = c.lower()
@@ -223,31 +197,45 @@ if file:
         if any(k in lc for k in ["amount","montant","price","total"]):
             df[c] = pd.to_numeric(df[c], errors="coerce")
     df = df.dropna(how="all")
-
-    tn = re.sub(r"[^A-Za-z0-9_]", "_", os.path.splitext(file.name)[0].lower()) or "transactions"
+    tn = "transactions_collees" if texte and not file else re.sub(r"[^A-Za-z0-9_]", "_", os.path.splitext(file.name)[0].lower()) or "transactions"
     st.session_state.conn.register("tmp_df", df)
     st.session_state.conn.execute(f"CREATE OR REPLACE TABLE {tn} AS SELECT * FROM tmp_df")
     st.session_state.conn.unregister("tmp_df")
     st.session_state.table_name = tn
-
     schema_df = st.session_state.conn.execute(f"PRAGMA table_info('{tn}')").fetchdf()
     st.session_state.schema = [
         {"name": r["name"], "dtype": str(df[r["name"]].dtype) if r["name"] in df.columns else "unknown"}
         for _, r in schema_df.iterrows()
     ]
-
-    st.success(f"✅ Fichier chargé en table **{tn}** ({len(df):,} lignes, {len(df.columns)} colonnes)")
+    st.success(f"✅ Données chargées en table **{tn}** ({len(df):,} lignes, {len(df.columns)} colonnes)")
     with st.expander("👀 Aperçu (50 premières lignes)"):
         show_dataframe(df.head(50))
 
 st.markdown("---")
 
-# ------------------------- Question -> Réponse (multi-cells) -------------------------
+# ----------- Suggestions de questions -----------
+suggestions = [
+    "Quel est le volume total des transactions sur la période ?",
+    "Quel est le montant total transféré par jour ?",
+    "Quel est le nombre de transactions par heure ?",
+    "Quel est le montant moyen par transaction ?",
+    "Quel est le montant total des commissions générées ?",
+    "Comment évolue le nombre de transactions par jour sur la semaine ?",
+    "Quelles sont les heures de pic d’activité hier ?",
+    "Quel est le volume de transactions par canal ?",
+    "Quel est le montant total par type de service ?",
+    "Qui sont les top 10 marchands par volume de transactions ?",
+    "Quel est le taux de transactions échouées par jour ?",
+    "Quelle est la répartition des commissions entre distributeur, sous-distributeur, revendeur, marchand ?",
+    "Quels sont les clients ayant effectué plus de 10 transactions aujourd’hui ?"
+]
+
+st.markdown("### 💡 Suggestions de questions")
+selected = st.selectbox("Clique sur une question pour la pré-remplir :", [""] + suggestions)
+
+# ----------- Question -> Réponse (multi-cells) -----------
 if st.session_state.table_name and st.session_state.schema:
-
     st.subheader("Historique des analyses")
-
-    # Afficher chaque "cellule" précédente
     for i, t in enumerate(st.session_state.turns, start=1):
         with st.container():
             st.markdown(f"### 🔎 Question {i}")
@@ -257,17 +245,13 @@ if st.session_state.table_name and st.session_state.schema:
                 st.code(t["sql"], language="sql")
             if t.get("rationale"):
                 st.caption("Raisonnement : " + t["rationale"])
-
             df_show = t.get("df")
             if df_show is not None and len(df_show) > 0:
                 st.subheader("Résultats")
                 show_dataframe(df_show)
-
                 fig_i = plot_df(df_show, t.get("chart_cfg", {}))
                 if fig_i:
                     show_chart(fig_i)
-
-                # Exports — clés uniques par cellule
                 c1, c2 = st.columns(2)
                 with c1:
                     st.download_button(
@@ -279,8 +263,13 @@ if st.session_state.table_name and st.session_state.schema:
                     )
                 with c2:
                     buf_i = io.BytesIO()
+                    # On retire le fuseau horaire de toutes les colonnes datetime
+                    df_export = df_show.copy()
+                    for col in df_export.select_dtypes(include=["datetimetz"]).columns:
+                        df_export[col] = df_export[col].dt.tz_localize(None)
                     with pd.ExcelWriter(buf_i, engine="openpyxl") as xw:
-                        df_show.to_excel(xw, index=False, sheet_name="résultats")
+                        df_export.to_excel(xw, index=False, sheet_name="résultats")
+
                     st.download_button(
                         "⬇️ Export Excel",
                         buf_i.getvalue(),
@@ -290,85 +279,66 @@ if st.session_state.table_name and st.session_state.schema:
                     )
             else:
                 st.info("La requête n'a retourné aucune ligne.")
-
             st.markdown("---")
-
-    # Nouvelle "cellule" vide pour la prochaine question
     st.subheader("Pose ta question")
     form_key = f"ask_form_{len(st.session_state.turns)}"
+    default_question = selected if selected else ""
     with st.form(key=form_key, clear_on_submit=True):
         question = st.text_area(
             "Ex.: « CA et #transactions par jour sur 7 jours par canal »",
+            value=default_question,
             height=80,
             key=f"q_{len(st.session_state.turns)}",
         )
         btn = st.form_submit_button("Analyser")
-
-    if btn and question.strip():
-        # Historique messages (optionnel, pour compat)
-        st.session_state.messages.append({"role": "user", "content": question.strip()})
-
-        if not READY:
-            st.error("LLM non prêt. Ajoute OPENAI_API_KEY dans .env ou corrige la config.")
-        else:
-            try:
-                with st.spinner("Je génère la requête SQL..."):
-                    plan = nl_to_sql(question.strip(), st.session_state.table_name, st.session_state.schema)
-                    sql = (plan.get("sql", "") or "").strip()
-                    rationale = plan.get("rationale", "")
-                    chart_cfg = plan.get("chart", {}) or {}
-
-                    if not sql:
-                        # Conserver la cellule même en cas d'échec pour enchaîner les questions
+        if btn and question.strip():
+            st.session_state.messages.append({"role": "user", "content": question.strip()})
+            if not READY:
+                st.error("LLM non prêt. Ajoute OPENAI_API_KEY dans .env ou corrige la config.")
+            else:
+                try:
+                    with st.spinner("Je génère la requête SQL..."):
+                        plan = nl_to_sql(question.strip(), st.session_state.table_name, st.session_state.schema)
+                        sql = (plan.get("sql", "") or "").strip()
+                        rationale = plan.get("rationale", "")
+                        chart_cfg = plan.get("chart", {}) or {}
+                        if not sql:
+                            st.session_state.turns.append({
+                                "question": question.strip(),
+                                "sql": "",
+                                "rationale": "Impossible de générer une requête SQL.",
+                                "df": pd.DataFrame(),
+                                "chart_cfg": chart_cfg,
+                            })
+                            st.error("Impossible de générer une requête SQL.")
+                            st.experimental_rerun()
+                        df_res = exec_sql_safe(sql, st.session_state.conn)
                         st.session_state.turns.append({
                             "question": question.strip(),
-                            "sql": "",
-                            "rationale": "Impossible de générer une requête SQL.",
-                            "df": pd.DataFrame(),  # vide
+                            "sql": sql,
+                            "rationale": rationale,
+                            "df": df_res.head(200) if df_res is not None else pd.DataFrame(),
                             "chart_cfg": chart_cfg,
                         })
-                        st.error("Impossible de générer une requête SQL.")
+                        if df_res is not None and len(df_res) > 0:
+                            st.session_state.messages.append({"role": "assistant", "content": f"SQL exécuté ({len(df_res)} lignes)."})
+                        else:
+                            st.session_state.messages.append({"role": "assistant", "content": "Aucune ligne retournée."})
                         st.experimental_rerun()
-
-                    # Exécuter la requête en lecture seule
-                    df_res = exec_sql_safe(sql, st.session_state.conn)
-
-                    # Stocker un échantillon pour l'affichage et limiter la mémoire
+                except Exception as e:
                     st.session_state.turns.append({
                         "question": question.strip(),
-                        "sql": sql,
-                        "rationale": rationale,
-                        "df": df_res.head(200) if df_res is not None else pd.DataFrame(),
-                        "chart_cfg": chart_cfg,
+                        "sql": "",
+                        "rationale": f"Erreur : {e}",
+                        "df": pd.DataFrame(),
+                        "chart_cfg": {},
                     })
-
-                    # Messages compatibles avec l'ancien historique
-                    if df_res is not None and len(df_res) > 0:
-                        st.session_state.messages.append({"role": "assistant", "content": f"SQL exécuté ({len(df_res)} lignes)."})
-                    else:
-                        st.session_state.messages.append({"role": "assistant", "content": "Aucune ligne retournée."})
-
-                    # Re-run pour afficher une nouvelle cellule vide
+                    st.error(f"Erreur : {e}")
+                    st.session_state.messages.append({"role": "assistant", "content": f"Erreur : {e}"})
                     st.experimental_rerun()
-
-            except Exception as e:
-                # Conserver la cellule avec l'erreur et enchaîner
-                st.session_state.turns.append({
-                    "question": question.strip(),
-                    "sql": "",
-                    "rationale": f"Erreur : {e}",
-                    "df": pd.DataFrame(),
-                    "chart_cfg": {},
-                })
-                st.error(f"Erreur : {e}")
-                st.session_state.messages.append({"role": "assistant", "content": f"Erreur : {e}"})
-                st.experimental_rerun()
-
-    # Bouton de reset
     if st.button("🧹 Effacer l'historique"):
         st.session_state.turns = []
         st.session_state.messages = []
         st.success("Historique effacé.")
-
 else:
-    st.info("🔹 Charge d’abord un CSV (ex. `data/transactions_sample.csv`).")
+    st.info("🔹 Charge d’abord un CSV ou colle tes transactions (ex. `data/transactions_sample.csv`).")
