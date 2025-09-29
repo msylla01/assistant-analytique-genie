@@ -6,6 +6,8 @@ import duckdb
 import plotly.express as px
 from dotenv import load_dotenv
 
+
+
 st.set_page_config(page_title="Assistant Analytique (type Genie)", layout="wide")
 
 ENV_PATH = Path.cwd() / ".env"
@@ -202,6 +204,28 @@ if df is not None:
     st.session_state.conn.execute(f"CREATE OR REPLACE TABLE {tn} AS SELECT * FROM tmp_df")
     st.session_state.conn.unregister("tmp_df")
     st.session_state.table_name = tn
+    st.markdown("### 🚨 Détection de fraude (règles simples)")
+
+    if st.session_state.table_name:
+        query_fraude = f"""
+        SELECT *
+        FROM {st.session_state.table_name}
+        WHERE "Original Amount" > (
+            SELECT percentile_cont(0.99) WITHIN GROUP (ORDER BY "Original Amount")
+            FROM {st.session_state.table_name}
+        )
+        OR EXTRACT(HOUR FROM "Transaction Initiated Time") BETWEEN 0 AND 5
+        OR "Status" = 'Failed'
+        """
+        try:
+            df_fraude = exec_sql_safe(query_fraude, st.session_state.conn)
+            st.success(f"{len(df_fraude)} transactions potentiellement frauduleuses détectées.")
+            show_dataframe(df_fraude)
+            fig_fraude = plot_df(df_fraude, {"type": "scatter", "x": "Transaction Initiated Time", "y": ["Original Amount"]})
+            show_chart(fig_fraude)
+        except Exception as e:
+            st.error(f"Erreur lors de la détection de fraude : {e}")
+
     schema_df = st.session_state.conn.execute(f"PRAGMA table_info('{tn}')").fetchdf()
     st.session_state.schema = [
         {"name": r["name"], "dtype": str(df[r["name"]].dtype) if r["name"] in df.columns else "unknown"}
