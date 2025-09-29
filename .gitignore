@@ -3,3 +3,4 @@
 .venv
 
 .streamlit
+data/transactions*.csv
