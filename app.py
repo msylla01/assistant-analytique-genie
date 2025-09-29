@@ -207,24 +207,28 @@ if df is not None:
     st.markdown("### 🚨 Détection de fraude (règles simples)")
 
     if st.session_state.table_name:
-        query_fraude = f"""
-        SELECT *
-        FROM {st.session_state.table_name}
-        WHERE "Original Amount" > (
-            SELECT percentile_cont(0.99) WITHIN GROUP (ORDER BY "Original Amount")
+        # Check if "Original Amount" exists
+        if "Original Amount" in df.columns:
+            query_fraude = f"""
+            SELECT *
             FROM {st.session_state.table_name}
-        )
-        OR EXTRACT(HOUR FROM "Transaction Initiated Time") BETWEEN 0 AND 5
-        OR "Status" = 'Failed'
-        """
-        try:
-            df_fraude = exec_sql_safe(query_fraude, st.session_state.conn)
-            st.success(f"{len(df_fraude)} transactions potentiellement frauduleuses détectées.")
-            show_dataframe(df_fraude)
-            fig_fraude = plot_df(df_fraude, {"type": "scatter", "x": "Transaction Initiated Time", "y": ["Original Amount"]})
-            show_chart(fig_fraude)
-        except Exception as e:
-            st.error(f"Erreur lors de la détection de fraude : {e}")
+            WHERE "Original Amount" > (
+                SELECT percentile_cont(0.99) WITHIN GROUP (ORDER BY "Original Amount")
+                FROM {st.session_state.table_name}
+            )
+            OR EXTRACT(HOUR FROM "Transaction Initiated Time") BETWEEN 0 AND 5
+            OR "Status" = 'Failed'
+            """
+            try:
+                df_fraude = exec_sql_safe(query_fraude, st.session_state.conn)
+                st.success(f"{len(df_fraude)} transactions potentiellement frauduleuses détectées.")
+                show_dataframe(df_fraude)
+                fig_fraude = plot_df(df_fraude, {"type": "scatter", "x": "Transaction Initiated Time", "y": ["Original Amount"]})
+                show_chart(fig_fraude)
+            except Exception as e:
+                st.error(f"Erreur lors de la détection de fraude : {e}")
+        else:
+            st.warning('Colonne "Original Amount" absente : détection de fraude non appliquée.')
 
     schema_df = st.session_state.conn.execute(f"PRAGMA table_info('{tn}')").fetchdf()
     st.session_state.schema = [
@@ -239,19 +243,10 @@ st.markdown("---")
 
 # ----------- Suggestions de questions -----------
 suggestions = [
-    "Quel est le volume total des transactions sur la période ?",
     "Quel est le montant total transféré par jour ?",
     "Quel est le nombre de transactions par heure ?",
-    "Quel est le montant moyen par transaction ?",
-    "Quel est le montant total des commissions générées ?",
-    "Comment évolue le nombre de transactions par jour sur la semaine ?",
-    "Quelles sont les heures de pic d’activité hier ?",
     "Quel est le volume de transactions par canal ?",
     "Quel est le montant total par type de service ?",
-    "Qui sont les top 10 marchands par volume de transactions ?",
-    "Quel est le taux de transactions échouées par jour ?",
-    "Quelle est la répartition des commissions entre distributeur, sous-distributeur, revendeur, marchand ?",
-    "Quels sont les clients ayant effectué plus de 10 transactions aujourd’hui ?"
 ]
 
 st.markdown("### 💡 Suggestions de questions")
@@ -306,7 +301,21 @@ if st.session_state.table_name and st.session_state.schema:
             st.markdown("---")
     st.subheader("Pose ta question")
     form_key = f"ask_form_{len(st.session_state.turns)}"
-    default_question = selected if selected else ""
+    # Ajout d'une variable pour stocker la question sélectionnée via bouton
+    if "selected_suggestion" not in st.session_state:
+        st.session_state.selected_suggestion = ""
+    # Affichage des boutons horizontaux pour les suggestions
+    cols = st.columns(len(suggestions))
+    for idx, (col, sugg) in enumerate(zip(cols, suggestions)):
+        with col:
+            if st.button(sugg, key=f"sugg_btn_{len(st.session_state.turns)}_{idx}"):
+                st.session_state.selected_suggestion = sugg
+                # Effet popup : toast si dispo, sinon info
+                if hasattr(st, "toast"):
+                    st.toast(f"Suggestion sélectionnée : {sugg}")
+                else:
+                    st.info(f"Suggestion sélectionnée : {sugg}")
+    default_question = st.session_state.selected_suggestion
     with st.form(key=form_key, clear_on_submit=True):
         question = st.text_area(
             "Ex.: « CA et #transactions par jour sur 7 jours par canal »",
@@ -316,6 +325,7 @@ if st.session_state.table_name and st.session_state.schema:
         )
         btn = st.form_submit_button("Analyser")
         if btn and question.strip():
+            st.session_state.selected_suggestion = ""  # Reset après soumission
             st.session_state.messages.append({"role": "user", "content": question.strip()})
             if not READY:
                 st.error("LLM non prêt. Ajoute OPENAI_API_KEY dans .env ou corrige la config.")

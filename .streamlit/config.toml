@@ -1,0 +1,3 @@
+[server]
+fileWatcherType = "poll"
+maxUploadSize = 1000

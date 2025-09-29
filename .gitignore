@@ -5,7 +5,7 @@ data/*.csv
 # Environnements virtuels
 .venv/
 venv/
-env/
+.env
 
 # Fichiers temporaires
 .~lock.*
