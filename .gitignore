@@ -1,7 +1,24 @@
-# Environment variables
-.env
-.venv
-
-.streamlit
+# Fichiers de données volumineux
 data/transactions*.csv
-data/transactions_01.csv
+data/*.csv
+
+# Environnements virtuels
+.venv/
+venv/
+env/
+
+# Fichiers temporaires
+.~lock.*
+*.tmp
+*.temp
+
+# Fichiers système
+.DS_Store
+Thumbs.db
+
+# Fichiers Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
