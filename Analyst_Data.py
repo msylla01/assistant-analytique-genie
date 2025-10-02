@@ -462,7 +462,7 @@ def show_login_page():
                         st.error(message)
 
 # =============================================================================
-# FONCTIONS UTILITAIRES (reprises de app1.py)
+# FONCTIONS UTILITAIRES (reprises de app.py)
 # =============================================================================
 
 def show_dataframe(df: pd.DataFrame):
